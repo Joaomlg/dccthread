@@ -81,3 +81,11 @@ dccthread_t * dccthread_self(void) {
 const char * dccthread_name(dccthread_t *tid) {
     return tid->name;
 }
+
+void dccthread_yield(void) {
+    dccthread_t *current_thread = dccthread_self();
+    dlist_push_right(ready_list, current_thread);
+    if (swapcontext(&current_thread->context, &manager_thread->context) == -1) {
+        handle_error("Cannot swap context from current to manager thread");
+    }
+}
