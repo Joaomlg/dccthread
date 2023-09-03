@@ -41,8 +41,13 @@ void dccthread_init(void (*func)(int), int param) {
 
     main_thread = dccthread_create("main", func, param);
     
-    if (swapcontext(&manager_thread->context, &main_thread->context) == -1) {
-        handle_error("Cannot swap context to main thread");
+    while (!dlist_empty(ready_list)) {
+        dccthread_t *next_thread = (dccthread_t*) malloc(sizeof(dccthread_t));
+        next_thread = (dccthread_t*) dlist_pop_left(ready_list);
+
+        if (swapcontext(&manager_thread->context, &next_thread->context) == -1) {
+            handle_error("Cannot swap context from manager to next thread");
+        }
     }
     
     exit(EXIT_SUCCESS);
