@@ -40,11 +40,13 @@ void dccthread_init(void (*func)(int), int param) {
     
     while (!dlist_empty(ready_list)) {
         dccthread_t *next_thread = (dccthread_t*) malloc(sizeof(dccthread_t));
-        next_thread = (dccthread_t*) dlist_pop_left(ready_list);
+        next_thread = ready_list->head->data;
 
         if (swapcontext(&manager_thread->context, &next_thread->context) == -1) {
             handle_error("Cannot swap context from manager to next thread");
         }
+
+        dlist_pop_left(ready_list);
     }
     
     exit(EXIT_SUCCESS);
@@ -70,4 +72,8 @@ dccthread_t * dccthread_create(const char *name, void (*func)(int ), int param) 
     dlist_push_right(ready_list, new_thread);
 
     return new_thread;
+}
+
+dccthread_t * dccthread_self(void) {
+    return ready_list->head->data;
 }
