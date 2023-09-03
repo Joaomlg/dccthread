@@ -16,16 +16,13 @@ typedef struct dccthread{
 } dccthread_t;
 
 struct dlist *ready_list;
-struct dlist *waiting_list;
 
 dccthread_t *manager_thread;
-dccthread_t *main_thread;
 
 int threads_counter = 0;
 
 void dccthread_init(void (*func)(int), int param) {
     ready_list = dlist_create();
-    waiting_list = dlist_create();
 
     manager_thread = (dccthread_t*) malloc(sizeof(dccthread_t));
 
@@ -39,7 +36,7 @@ void dccthread_init(void (*func)(int), int param) {
 
     strcpy(manager_thread->name, "manager");
 
-    main_thread = dccthread_create("main", func, param);
+    dccthread_create("main", func, param);
     
     while (!dlist_empty(ready_list)) {
         dccthread_t *next_thread = (dccthread_t*) malloc(sizeof(dccthread_t));
