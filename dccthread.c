@@ -77,3 +77,7 @@ dccthread_t * dccthread_create(const char *name, void (*func)(int ), int param) 
 dccthread_t * dccthread_self(void) {
     return ready_list->head->data;
 }
+
+const char * dccthread_name(dccthread_t *tid) {
+    return tid->name;
+}
