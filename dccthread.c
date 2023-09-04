@@ -24,12 +24,6 @@ dccthread_t *manager_thread;
 
 int threads_counter = 0;
 
-int dccthread_dlist_cmp_func (const void *e1, const void *e2, void *userdata) {
-    dccthread_t *waiting_thread = (dccthread_t*) e1;
-    dccthread_t *exiting_thread = (dccthread_t*) e2;
-    return (waiting_thread->waiting_for == exiting_thread) ? 0 : 1;
-}
-
 void dccthread_init(void (*func)(int), int param) {
     ready_list = dlist_create();
     waiting_list = dlist_create();
@@ -121,11 +115,19 @@ void dccthread_wait(dccthread_t *tid) {
     }
 }
 
+int dccthread_dlist_check_thread_waiting_for_other (const void *e1, const void *e2, void *userdata) {
+    dccthread_t *waiting_thread = (dccthread_t*) e1;
+    dccthread_t *exiting_thread = (dccthread_t*) e2;
+
+    return (waiting_thread->waiting_for == exiting_thread) ? 0 : 1;
+}
+
 void dccthread_exit(void) {
     dccthread_t *current_thread = dccthread_self();
     current_thread->exit_state = 1;
 
-    dccthread_t *was_waiting = (dccthread_t*) dlist_find_remove(waiting_list, current_thread, dccthread_dlist_cmp_func, NULL);
+    dccthread_t *was_waiting = (dccthread_t*) dlist_find_remove(waiting_list, current_thread, 
+        dccthread_dlist_check_thread_waiting_for_other, NULL);
 
     if (was_waiting != NULL) {
         dlist_push_right(ready_list, was_waiting);
