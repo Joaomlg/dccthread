@@ -2,12 +2,16 @@
 #include <stdlib.h>
 #include <ucontext.h>
 #include <string.h>
+#include <signal.h>
+#include <time.h>
 
 #include "dccthread.h"
 #include "dlist.h"
 
 #define handle_error(msg) \
     do { perror(msg); exit(EXIT_FAILURE); } while (0)
+
+#define TIME_NSEC_PREEMPTION 10000000
 
 typedef struct dccthread{
 	int id;
@@ -24,9 +28,39 @@ dccthread_t *manager_thread;
 
 int threads_counter = 0;
 
+struct sigaction act;
+struct sigevent sevp;
+timer_t timerid;
+struct itimerspec new_value;
+
+static void timer_handler_remove_thread(int sig, siginfo_t *info, void *ucontext) {
+    dccthread_yield();
+}
+
 void dccthread_init(void (*func)(int), int param) {
     ready_list = dlist_create();
     waiting_list = dlist_create();
+
+    act.sa_sigaction = timer_handler_remove_thread;
+    if (sigemptyset(&act.sa_mask) == -1) {
+        handle_error("Cannot initialize and empty a signal set");        
+    }
+    if (sigaddset(&act.sa_mask, SIGUSR1) == -1) {
+        handle_error("Cannot add SIGUSR1 to signal set");
+    }
+    act.sa_flags = SA_SIGINFO;
+    if (sigaction(SIGUSR1, &act, NULL) == -1) {
+        handle_error("Cannot set signal handler");
+    }
+
+    sevp.sigev_notify = SIGEV_SIGNAL;
+    sevp.sigev_signo = SIGUSR1;
+    if (timer_create(CLOCK_PROCESS_CPUTIME_ID, &sevp, &timerid) == -1) {
+        handle_error("Cannot create timer");
+    }
+
+    new_value.it_value.tv_nsec = TIME_NSEC_PREEMPTION;
+    new_value.it_interval.tv_nsec = TIME_NSEC_PREEMPTION;
 
     manager_thread = (dccthread_t*) malloc(sizeof(dccthread_t));
 
@@ -49,6 +83,9 @@ void dccthread_init(void (*func)(int), int param) {
         dccthread_t *next_thread = (dccthread_t*) malloc(sizeof(dccthread_t));
         next_thread = ready_list->head->data;
 
+        if (timer_settime(timerid, 0, &new_value, NULL) == -1) {
+            handle_error("Cannot set timer");
+        }
         if (swapcontext(&manager_thread->context, &next_thread->context) == -1) {
             handle_error("Cannot swap context from manager to next thread");
         }
