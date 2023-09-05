@@ -28,10 +28,10 @@ dccthread_t *manager_thread;
 
 int threads_counter = 0;
 
-struct sigaction act;
-struct sigevent sevp;
-timer_t timerid;
-struct itimerspec new_value;
+struct sigaction action_thread_removal;
+struct sigevent notification_setting_thread_removal;
+timer_t timer_id_thread_removal;
+struct itimerspec timer_values_thread_removal;
 
 static void timer_handler_remove_thread(int sig, siginfo_t *info, void *ucontext) {
     dccthread_yield();
@@ -41,26 +41,26 @@ void dccthread_init(void (*func)(int), int param) {
     ready_list = dlist_create();
     waiting_list = dlist_create();
 
-    act.sa_sigaction = timer_handler_remove_thread;
-    if (sigemptyset(&act.sa_mask) == -1) {
+    action_thread_removal.sa_sigaction = timer_handler_remove_thread;
+    action_thread_removal.sa_flags = SA_SIGINFO;
+    if (sigemptyset(&action_thread_removal.sa_mask) == -1) {
         handle_error("Cannot initialize and empty a signal set");        
     }
-    if (sigaddset(&act.sa_mask, SIGUSR1) == -1) {
+    if (sigaddset(&action_thread_removal.sa_mask, SIGUSR1) == -1) {
         handle_error("Cannot add SIGUSR1 to signal set");
     }
-    act.sa_flags = SA_SIGINFO;
-    if (sigaction(SIGUSR1, &act, NULL) == -1) {
+    if (sigaction(SIGUSR1, &action_thread_removal, NULL) == -1) {
         handle_error("Cannot set signal handler");
     }
 
-    sevp.sigev_notify = SIGEV_SIGNAL;
-    sevp.sigev_signo = SIGUSR1;
-    if (timer_create(CLOCK_PROCESS_CPUTIME_ID, &sevp, &timerid) == -1) {
+    notification_setting_thread_removal.sigev_notify = SIGEV_SIGNAL;
+    notification_setting_thread_removal.sigev_signo = SIGUSR1;
+    if (timer_create(CLOCK_PROCESS_CPUTIME_ID, &notification_setting_thread_removal, &timer_id_thread_removal) == -1) {
         handle_error("Cannot create timer");
     }
 
-    new_value.it_value.tv_nsec = TIME_NSEC_PREEMPTION;
-    new_value.it_interval.tv_nsec = TIME_NSEC_PREEMPTION;
+    timer_values_thread_removal.it_value.tv_nsec = TIME_NSEC_PREEMPTION;
+    timer_values_thread_removal.it_interval.tv_nsec = TIME_NSEC_PREEMPTION;
 
     manager_thread = (dccthread_t*) malloc(sizeof(dccthread_t));
 
@@ -83,7 +83,7 @@ void dccthread_init(void (*func)(int), int param) {
         dccthread_t *next_thread = (dccthread_t*) malloc(sizeof(dccthread_t));
         next_thread = ready_list->head->data;
 
-        if (timer_settime(timerid, 0, &new_value, NULL) == -1) {
+        if (timer_settime(timer_id_thread_removal, 0, &timer_values_thread_removal, NULL) == -1) {
             handle_error("Cannot set timer");
         }
         if (swapcontext(&manager_thread->context, &next_thread->context) == -1) {
