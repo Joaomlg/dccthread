@@ -2,12 +2,16 @@
 #include <stdlib.h>
 #include <ucontext.h>
 #include <string.h>
+#include <signal.h>
+#include <time.h>
 
 #include "dccthread.h"
 #include "dlist.h"
 
 #define handle_error(msg) \
     do { perror(msg); exit(EXIT_FAILURE); } while (0)
+
+#define THREAD_YIELD_TIME_NSEC 10000000
 
 typedef struct dccthread{
 	int id;
@@ -24,9 +28,35 @@ dccthread_t *manager_thread;
 
 int threads_counter = 0;
 
+struct sigaction thread_yield_sigaction;
+struct sigevent thread_yield_timer_sigevent;
+timer_t thread_yield_timer_id;
+struct itimerspec thread_yield_timer_spec;
+
+static void thread_yield_sigaction_handler(int signo, siginfo_t *info, void *context) {
+    dccthread_yield();
+}
+
 void dccthread_init(void (*func)(int), int param) {
     ready_list = dlist_create();
     waiting_list = dlist_create();
+
+    thread_yield_sigaction.sa_flags = SA_SIGINFO;
+    thread_yield_sigaction.sa_sigaction = thread_yield_sigaction_handler;
+
+    if (sigaction(SIGUSR1, &thread_yield_sigaction, NULL) == -1) {
+        handle_error("Cannot set action for thread yield timer signal");
+    }
+
+    thread_yield_timer_sigevent.sigev_notify = SIGEV_SIGNAL;
+    thread_yield_timer_sigevent.sigev_signo = SIGUSR1;
+
+    if (timer_create(CLOCK_PROCESS_CPUTIME_ID, &thread_yield_timer_sigevent, &thread_yield_timer_id) == -1) {
+        handle_error("Cannot create timer to force thread yield");
+    }
+
+    thread_yield_timer_spec.it_value.tv_nsec = THREAD_YIELD_TIME_NSEC;
+    thread_yield_timer_spec.it_interval.tv_nsec = THREAD_YIELD_TIME_NSEC;
 
     manager_thread = (dccthread_t*) malloc(sizeof(dccthread_t));
 
@@ -49,6 +79,9 @@ void dccthread_init(void (*func)(int), int param) {
         dccthread_t *next_thread = (dccthread_t*) malloc(sizeof(dccthread_t));
         next_thread = ready_list->head->data;
 
+        if (timer_settime(thread_yield_timer_id, 0, &thread_yield_timer_spec, NULL) == -1) {
+            handle_error("Cannot set timer");
+        }
         if (swapcontext(&manager_thread->context, &next_thread->context) == -1) {
             handle_error("Cannot swap context from manager to next thread");
         }
