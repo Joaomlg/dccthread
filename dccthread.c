@@ -11,7 +11,7 @@
 #define handle_error(msg) \
     do { perror(msg); exit(EXIT_FAILURE); } while (0)
 
-#define TIME_NSEC_PREEMPTION 10000000
+#define THREAD_YIELD_TIME_NSEC 10000000
 
 typedef struct dccthread{
 	int id;
@@ -28,12 +28,12 @@ dccthread_t *manager_thread;
 
 int threads_counter = 0;
 
-struct sigaction action_thread_removal;
-struct sigevent notification_setting_thread_removal;
-timer_t timer_id_thread_removal;
-struct itimerspec timer_values_thread_removal;
+struct sigaction thread_yield_sigaction;
+struct sigevent thread_yield_timer_sigevent;
+timer_t thread_yield_timer_id;
+struct itimerspec thread_yield_timer_spec;
 
-static void timer_handler_remove_thread(int sig, siginfo_t *info, void *ucontext) {
+static void thread_yield_sigaction_handler(int signo, siginfo_t *info, void *context) {
     dccthread_yield();
 }
 
@@ -41,26 +41,22 @@ void dccthread_init(void (*func)(int), int param) {
     ready_list = dlist_create();
     waiting_list = dlist_create();
 
-    action_thread_removal.sa_sigaction = timer_handler_remove_thread;
-    action_thread_removal.sa_flags = SA_SIGINFO;
-    if (sigemptyset(&action_thread_removal.sa_mask) == -1) {
-        handle_error("Cannot initialize and empty a signal set");        
-    }
-    if (sigaddset(&action_thread_removal.sa_mask, SIGUSR1) == -1) {
-        handle_error("Cannot add SIGUSR1 to signal set");
-    }
-    if (sigaction(SIGUSR1, &action_thread_removal, NULL) == -1) {
-        handle_error("Cannot set signal handler");
+    thread_yield_sigaction.sa_flags = SA_SIGINFO;
+    thread_yield_sigaction.sa_sigaction = thread_yield_sigaction_handler;
+
+    if (sigaction(SIGUSR1, &thread_yield_sigaction, NULL) == -1) {
+        handle_error("Cannot set action for thread yield timer signal");
     }
 
-    notification_setting_thread_removal.sigev_notify = SIGEV_SIGNAL;
-    notification_setting_thread_removal.sigev_signo = SIGUSR1;
-    if (timer_create(CLOCK_PROCESS_CPUTIME_ID, &notification_setting_thread_removal, &timer_id_thread_removal) == -1) {
-        handle_error("Cannot create timer");
+    thread_yield_timer_sigevent.sigev_notify = SIGEV_SIGNAL;
+    thread_yield_timer_sigevent.sigev_signo = SIGUSR1;
+
+    if (timer_create(CLOCK_PROCESS_CPUTIME_ID, &thread_yield_timer_sigevent, &thread_yield_timer_id) == -1) {
+        handle_error("Cannot create timer to force thread yield");
     }
 
-    timer_values_thread_removal.it_value.tv_nsec = TIME_NSEC_PREEMPTION;
-    timer_values_thread_removal.it_interval.tv_nsec = TIME_NSEC_PREEMPTION;
+    thread_yield_timer_spec.it_value.tv_nsec = THREAD_YIELD_TIME_NSEC;
+    thread_yield_timer_spec.it_interval.tv_nsec = THREAD_YIELD_TIME_NSEC;
 
     manager_thread = (dccthread_t*) malloc(sizeof(dccthread_t));
 
@@ -83,7 +79,7 @@ void dccthread_init(void (*func)(int), int param) {
         dccthread_t *next_thread = (dccthread_t*) malloc(sizeof(dccthread_t));
         next_thread = ready_list->head->data;
 
-        if (timer_settime(timer_id_thread_removal, 0, &timer_values_thread_removal, NULL) == -1) {
+        if (timer_settime(thread_yield_timer_id, 0, &thread_yield_timer_spec, NULL) == -1) {
             handle_error("Cannot set timer");
         }
         if (swapcontext(&manager_thread->context, &next_thread->context) == -1) {
