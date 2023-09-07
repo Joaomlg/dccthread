@@ -50,7 +50,7 @@ void dccthread_init(void (*func)(int), int param) {
     }
 
     thread_yield_timer_spec.it_value.tv_nsec = THREAD_YIELD_TIME_NSEC;
-    thread_yield_timer_spec.it_interval.tv_nsec = THREAD_YIELD_TIME_NSEC;
+
     thread_yield_sigaction.sa_flags = SA_SIGINFO;
     thread_yield_sigaction.sa_sigaction = thread_yield_sigaction_handler;
 
