@@ -33,6 +33,7 @@ timer_t thread_yield_timer_id;
 struct itimerspec thread_yield_timer_spec;
 struct sigevent thread_yield_timer_sigevent;
 struct sigaction thread_yield_sigaction;
+sigset_t mask_signals_set;
 
 static void thread_yield_sigaction_handler(int signo, siginfo_t *info, void *context) {
     dccthread_yield();
@@ -58,6 +59,14 @@ void dccthread_init(void (*func)(int), int param) {
         handle_error("Cannot set action for thread yield timer signal");
     }
 
+    if (sigemptyset(&mask_signals_set) == -1) {
+        handle_error("Cannot initiate an empty mask signals set");
+    }
+
+    if (sigaddset(&mask_signals_set, THREAD_YIELD_TIMER_SIGNAL) == -1) {
+        handle_error("Cannot add thread yield timer signal to mask signals set");
+    }
+
     manager_thread = (dccthread_t*) malloc(sizeof(dccthread_t));
 
     if (getcontext(&manager_thread->context) == -1) {
@@ -74,6 +83,10 @@ void dccthread_init(void (*func)(int), int param) {
     strcpy(manager_thread->name, "manager");
 
     dccthread_create("main", func, param);
+
+    if (sigprocmask(SIG_BLOCK, &mask_signals_set, NULL) == -1) {
+        handle_error("Cannot block signals in manager thread");
+    }
     
     while (!dlist_empty(ready_list)) {
         dccthread_t *next_thread = (dccthread_t*) malloc(sizeof(dccthread_t));
@@ -94,6 +107,10 @@ void dccthread_init(void (*func)(int), int param) {
 }
 
 dccthread_t * dccthread_create(const char *name, void (*func)(int ), int param) {
+    // if (sigprocmask(SIG_BLOCK, &mask_signals_set, NULL) == -1) {
+    //     handle_error("Cannot block signals in dccthread_create");
+    // }
+
     dccthread_t *new_thread;
     new_thread = (dccthread_t*) malloc(sizeof(dccthread_t));
 
@@ -115,6 +132,10 @@ dccthread_t * dccthread_create(const char *name, void (*func)(int ), int param) 
 
     dlist_push_right(ready_list, new_thread);
 
+    // if (sigprocmask(SIG_UNBLOCK, &mask_signals_set, NULL) == -1) {
+    //     handle_error("Cannot unblock signals in dccthread_create");
+    // }
+
     return new_thread;
 }
 
@@ -127,14 +148,28 @@ const char * dccthread_name(dccthread_t *tid) {
 }
 
 void dccthread_yield(void) {
+    if (sigprocmask(SIG_BLOCK, &mask_signals_set, NULL) == -1) {
+        handle_error("Cannot block signals in dccthread_yield");
+    }
+
     dccthread_t *current_thread = dccthread_self();
+
     dlist_push_right(ready_list, current_thread);
+
     if (swapcontext(&current_thread->context, &manager_thread->context) == -1) {
         handle_error("Cannot swap context from current to manager thread");
+    }
+
+    if (sigprocmask(SIG_UNBLOCK, &mask_signals_set, NULL) == -1) {
+        handle_error("Cannot unblock signals in dccthread_yield");
     }
 }
 
 void dccthread_wait(dccthread_t *tid) {
+    if (sigprocmask(SIG_BLOCK, &mask_signals_set, NULL) == -1) {
+        handle_error("Cannot block signals in dccthread_wait");
+    }
+
     dccthread_t *current_thread = dccthread_self();
 
     if (tid->exit_state != 0) {
@@ -147,6 +182,10 @@ void dccthread_wait(dccthread_t *tid) {
     if (swapcontext(&current_thread->context, &manager_thread->context) == -1) {
         handle_error("Cannot swap context from current to manager thread when waiting for other thread");
     }
+
+    if (sigprocmask(SIG_UNBLOCK, &mask_signals_set, NULL) == -1) {
+        handle_error("Cannot unblock signals in dccthread_wait");
+    }
 }
 
 int dccthread_dlist_check_thread_waiting_for_other (const void *e1, const void *e2, void *userdata) {
@@ -157,6 +196,10 @@ int dccthread_dlist_check_thread_waiting_for_other (const void *e1, const void *
 }
 
 void dccthread_exit(void) {
+    if (sigprocmask(SIG_BLOCK, &mask_signals_set, NULL) == -1) {
+        handle_error("Cannot block signals in dccthread_exit");
+    }
+
     dccthread_t *current_thread = dccthread_self();
     current_thread->exit_state = 1;
 
@@ -168,4 +211,8 @@ void dccthread_exit(void) {
     }
 
     setcontext(&manager_thread->context);
+
+    if (sigprocmask(SIG_UNBLOCK, &mask_signals_set, NULL) == -1) {
+        handle_error("Cannot unblock signals in dccthread_exit");
+    }
 }
