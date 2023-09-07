@@ -107,10 +107,6 @@ void dccthread_init(void (*func)(int), int param) {
 }
 
 dccthread_t * dccthread_create(const char *name, void (*func)(int ), int param) {
-    // if (sigprocmask(SIG_BLOCK, &mask_signals_set, NULL) == -1) {
-    //     handle_error("Cannot block signals in dccthread_create");
-    // }
-
     dccthread_t *new_thread;
     new_thread = (dccthread_t*) malloc(sizeof(dccthread_t));
 
@@ -124,6 +120,10 @@ dccthread_t * dccthread_create(const char *name, void (*func)(int ), int param) 
         handle_error("Cannot get context to create a new thread");
     }
 
+    if (sigprocmask(SIG_BLOCK, &mask_signals_set, NULL) == -1) {
+        handle_error("Cannot block signals in dccthread_create");
+    }
+
     new_thread->context.uc_stack.ss_sp = malloc(THREAD_STACK_SIZE);
     new_thread->context.uc_stack.ss_size = THREAD_STACK_SIZE;
     new_thread->context.uc_link = &manager_thread->context;
@@ -132,9 +132,9 @@ dccthread_t * dccthread_create(const char *name, void (*func)(int ), int param) 
 
     dlist_push_right(ready_list, new_thread);
 
-    // if (sigprocmask(SIG_UNBLOCK, &mask_signals_set, NULL) == -1) {
-    //     handle_error("Cannot unblock signals in dccthread_create");
-    // }
+    if (sigprocmask(SIG_UNBLOCK, &mask_signals_set, NULL) == -1) {
+        handle_error("Cannot unblock signals in dccthread_create");
+    }
 
     return new_thread;
 }
