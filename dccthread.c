@@ -11,7 +11,8 @@
 #define handle_error(msg) \
     do { perror(msg); exit(EXIT_FAILURE); } while (0)
 
-#define THREAD_YIELD_TIME_NSEC 10000000
+#define QUANTUM_TIME_NSEC 10000000
+#define ROUND_ROBIN_TIMER_SIGNAL SIGUSR1
 
 typedef struct dccthread{
 	int id;
@@ -28,12 +29,13 @@ dccthread_t *manager_thread;
 
 int threads_counter = 0;
 
-struct sigaction thread_yield_sigaction;
-struct sigevent thread_yield_timer_sigevent;
-timer_t thread_yield_timer_id;
-struct itimerspec thread_yield_timer_spec;
+timer_t round_robin_timer_id;
+struct itimerspec round_robin_timer_spec;
+struct sigevent round_robin_timer_sigevent;
+struct sigaction round_robin_sigaction;
+sigset_t mask_signals_set;
 
-static void thread_yield_sigaction_handler(int signo, siginfo_t *info, void *context) {
+static void round_robin_sigaction_handler(int signo, siginfo_t *info, void *context) {
     dccthread_yield();
 }
 
@@ -41,22 +43,29 @@ void dccthread_init(void (*func)(int), int param) {
     ready_list = dlist_create();
     waiting_list = dlist_create();
 
-    thread_yield_sigaction.sa_flags = SA_SIGINFO;
-    thread_yield_sigaction.sa_sigaction = thread_yield_sigaction_handler;
+    round_robin_timer_sigevent.sigev_notify = SIGEV_SIGNAL;
+    round_robin_timer_sigevent.sigev_signo = ROUND_ROBIN_TIMER_SIGNAL;
 
-    if (sigaction(SIGUSR1, &thread_yield_sigaction, NULL) == -1) {
-        handle_error("Cannot set action for thread yield timer signal");
-    }
-
-    thread_yield_timer_sigevent.sigev_notify = SIGEV_SIGNAL;
-    thread_yield_timer_sigevent.sigev_signo = SIGUSR1;
-
-    if (timer_create(CLOCK_PROCESS_CPUTIME_ID, &thread_yield_timer_sigevent, &thread_yield_timer_id) == -1) {
+    if (timer_create(CLOCK_PROCESS_CPUTIME_ID, &round_robin_timer_sigevent, &round_robin_timer_id) == -1) {
         handle_error("Cannot create timer to force thread yield");
     }
 
-    thread_yield_timer_spec.it_value.tv_nsec = THREAD_YIELD_TIME_NSEC;
-    thread_yield_timer_spec.it_interval.tv_nsec = THREAD_YIELD_TIME_NSEC;
+    round_robin_timer_spec.it_value.tv_nsec = QUANTUM_TIME_NSEC;
+
+    round_robin_sigaction.sa_flags = SA_SIGINFO;
+    round_robin_sigaction.sa_sigaction = round_robin_sigaction_handler;
+
+    if (sigaction(ROUND_ROBIN_TIMER_SIGNAL, &round_robin_sigaction, NULL) == -1) {
+        handle_error("Cannot set action for thread yield timer signal");
+    }
+
+    if (sigemptyset(&mask_signals_set) == -1) {
+        handle_error("Cannot initiate an empty mask signals set");
+    }
+
+    if (sigaddset(&mask_signals_set, ROUND_ROBIN_TIMER_SIGNAL) == -1) {
+        handle_error("Cannot add thread yield timer signal to mask signals set");
+    }
 
     manager_thread = (dccthread_t*) malloc(sizeof(dccthread_t));
 
@@ -74,14 +83,19 @@ void dccthread_init(void (*func)(int), int param) {
     strcpy(manager_thread->name, "manager");
 
     dccthread_create("main", func, param);
+
+    if (sigprocmask(SIG_BLOCK, &mask_signals_set, NULL) == -1) {
+        handle_error("Cannot block signals in manager thread");
+    }
     
     while (!dlist_empty(ready_list)) {
         dccthread_t *next_thread = (dccthread_t*) malloc(sizeof(dccthread_t));
         next_thread = ready_list->head->data;
 
-        if (timer_settime(thread_yield_timer_id, 0, &thread_yield_timer_spec, NULL) == -1) {
-            handle_error("Cannot set timer");
+        if (timer_settime(round_robin_timer_id, 0, &round_robin_timer_spec, NULL) == -1) {
+            handle_error("Cannot set timer to yield thread");
         }
+
         if (swapcontext(&manager_thread->context, &next_thread->context) == -1) {
             handle_error("Cannot swap context from manager to next thread");
         }
@@ -106,6 +120,10 @@ dccthread_t * dccthread_create(const char *name, void (*func)(int ), int param) 
         handle_error("Cannot get context to create a new thread");
     }
 
+    if (sigprocmask(SIG_BLOCK, &mask_signals_set, NULL) == -1) {
+        handle_error("Cannot block signals in dccthread_create");
+    }
+
     new_thread->context.uc_stack.ss_sp = malloc(THREAD_STACK_SIZE);
     new_thread->context.uc_stack.ss_size = THREAD_STACK_SIZE;
     new_thread->context.uc_link = &manager_thread->context;
@@ -113,6 +131,10 @@ dccthread_t * dccthread_create(const char *name, void (*func)(int ), int param) 
     makecontext(&new_thread->context, (void(*)(void))func, 1, param);
 
     dlist_push_right(ready_list, new_thread);
+
+    if (sigprocmask(SIG_UNBLOCK, &mask_signals_set, NULL) == -1) {
+        handle_error("Cannot unblock signals in dccthread_create");
+    }
 
     return new_thread;
 }
@@ -126,14 +148,28 @@ const char * dccthread_name(dccthread_t *tid) {
 }
 
 void dccthread_yield(void) {
+    if (sigprocmask(SIG_BLOCK, &mask_signals_set, NULL) == -1) {
+        handle_error("Cannot block signals in dccthread_yield");
+    }
+
     dccthread_t *current_thread = dccthread_self();
+
     dlist_push_right(ready_list, current_thread);
+
     if (swapcontext(&current_thread->context, &manager_thread->context) == -1) {
         handle_error("Cannot swap context from current to manager thread");
+    }
+
+    if (sigprocmask(SIG_UNBLOCK, &mask_signals_set, NULL) == -1) {
+        handle_error("Cannot unblock signals in dccthread_yield");
     }
 }
 
 void dccthread_wait(dccthread_t *tid) {
+    if (sigprocmask(SIG_BLOCK, &mask_signals_set, NULL) == -1) {
+        handle_error("Cannot block signals in dccthread_wait");
+    }
+
     dccthread_t *current_thread = dccthread_self();
 
     if (tid->exit_state != 0) {
@@ -146,6 +182,10 @@ void dccthread_wait(dccthread_t *tid) {
     if (swapcontext(&current_thread->context, &manager_thread->context) == -1) {
         handle_error("Cannot swap context from current to manager thread when waiting for other thread");
     }
+
+    if (sigprocmask(SIG_UNBLOCK, &mask_signals_set, NULL) == -1) {
+        handle_error("Cannot unblock signals in dccthread_wait");
+    }
 }
 
 int dccthread_dlist_check_thread_waiting_for_other (const void *e1, const void *e2, void *userdata) {
@@ -156,6 +196,10 @@ int dccthread_dlist_check_thread_waiting_for_other (const void *e1, const void *
 }
 
 void dccthread_exit(void) {
+    if (sigprocmask(SIG_BLOCK, &mask_signals_set, NULL) == -1) {
+        handle_error("Cannot block signals in dccthread_exit");
+    }
+
     dccthread_t *current_thread = dccthread_self();
     current_thread->exit_state = 1;
 
@@ -167,4 +211,8 @@ void dccthread_exit(void) {
     }
 
     setcontext(&manager_thread->context);
+
+    if (sigprocmask(SIG_UNBLOCK, &mask_signals_set, NULL) == -1) {
+        handle_error("Cannot unblock signals in dccthread_exit");
+    }
 }
