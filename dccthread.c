@@ -4,7 +4,6 @@
 #include <string.h>
 #include <signal.h>
 #include <time.h>
-#include <unistd.h>
 
 #include "dccthread.h"
 #include "dlist.h"
