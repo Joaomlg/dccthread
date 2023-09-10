@@ -46,9 +46,9 @@ static void round_robin_sigaction_handler(int signo, siginfo_t *info, void *cont
 
 int dccthread_dlist_check_thread_sleep (const void *e1, const void *e2, void *userdata) {
     dccthread_t *waiting_thread = (dccthread_t*) e1;
-    timer_t *timer_ptr = (timer_t*) e2;
+    timer_t *timer_id = (timer_t*) e2;
 
-    return (waiting_thread->sleep_timer_id == *timer_ptr) ? 0 : 1;
+    return (waiting_thread->sleep_timer_id == *timer_id) ? 0 : 1;
 }
 
 static void sleep_sigaction_handler(int signo, siginfo_t *info, void *context) {
@@ -56,8 +56,8 @@ static void sleep_sigaction_handler(int signo, siginfo_t *info, void *context) {
         handle_error("Cannot block signals in sleep_sigaction_handler");
     }
 
-    timer_t *timer_ptr = info->si_ptr;
-    dccthread_t *was_sleeping = (dccthread_t*) dlist_find_remove(waiting_list, timer_ptr, 
+    timer_t *timer_id = info->si_ptr;
+    dccthread_t *was_sleeping = (dccthread_t*) dlist_find_remove(waiting_list, timer_id, 
         dccthread_dlist_check_thread_sleep, NULL);
 
     if (was_sleeping != NULL) {
