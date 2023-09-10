@@ -22,7 +22,7 @@ typedef struct dccthread{
 	ucontext_t context;
     dccthread_t *waiting_for;
     int exit_state;
-    int sleep_si_timerid;
+    timer_t sleep_timer_id;
 } dccthread_t;
 
 struct dlist *ready_list;
@@ -38,7 +38,7 @@ struct sigevent round_robin_timer_sigevent;
 struct sigaction round_robin_sigaction;
 sigset_t mask_signals_set;
 
-unsigned long int sleep_si_timerid_counter = 1;
+struct sigaction sleep_sigaction;
 
 static void round_robin_sigaction_handler(int signo, siginfo_t *info, void *context) {
     dccthread_yield();
@@ -46,9 +46,9 @@ static void round_robin_sigaction_handler(int signo, siginfo_t *info, void *cont
 
 int dccthread_dlist_check_thread_sleep (const void *e1, const void *e2, void *userdata) {
     dccthread_t *waiting_thread = (dccthread_t*) e1;
-    dccthread_t *exiting_thread = (dccthread_t*) e2;
+    dccthread_t *sleeping_thread = (dccthread_t*) e2;
 
-    return (waiting_thread->sleep_si_timerid == exiting_thread->sleep_si_timerid) ? 0 : 1;
+    return (waiting_thread->sleep_timer_id == sleeping_thread->sleep_timer_id) ? 0 : 1;
 }
 
 static void sleep_sigaction_handler(int signo, siginfo_t *info, void *context) {
@@ -57,7 +57,8 @@ static void sleep_sigaction_handler(int signo, siginfo_t *info, void *context) {
     }
 
     dccthread_t* thread_context = (dccthread_t*) malloc (sizeof(dccthread_t));
-    thread_context->sleep_si_timerid = info->si_timerid;
+    timer_t *timer_ptr = info->si_ptr;
+    thread_context->sleep_timer_id = *timer_ptr;
     
     dccthread_t *was_sleeping = (dccthread_t*) dlist_find_remove(waiting_list, thread_context, 
         dccthread_dlist_check_thread_sleep, NULL);
@@ -66,7 +67,8 @@ static void sleep_sigaction_handler(int signo, siginfo_t *info, void *context) {
         dlist_push_right(ready_list, was_sleeping);
     }
 
-    setcontext(&was_sleeping->context);
+    dccthread_t *current_thread = dccthread_self();
+    setcontext(&current_thread->context);
 
     if (sigprocmask(SIG_UNBLOCK, &mask_signals_set, NULL) == -1) {
         handle_error("Cannot unblock signals in sleep_sigaction_handler");
@@ -91,6 +93,13 @@ void dccthread_init(void (*func)(int), int param) {
 
     if (sigaction(ROUND_ROBIN_TIMER_SIGNAL, &round_robin_sigaction, NULL) == -1) {
         handle_error("Cannot set action for thread yield timer signal");
+    }
+
+    sleep_sigaction.sa_flags = SA_SIGINFO;
+    sleep_sigaction.sa_sigaction = sleep_sigaction_handler;
+
+    if (sigaction(SLEEP_TIMER_SIGNAL, &sleep_sigaction, NULL) == -1) {
+        handle_error("Cannot set action for sleep thread");
     }
 
     if (sigemptyset(&mask_signals_set) == -1) {
@@ -123,20 +132,22 @@ void dccthread_init(void (*func)(int), int param) {
     }
     
     while (!dlist_empty(ready_list) || !dlist_empty(waiting_list)) {
-        if (!dlist_empty(ready_list)) {
-            dccthread_t *next_thread = (dccthread_t*) malloc(sizeof(dccthread_t));
-            next_thread = ready_list->head->data;
-
-            if (timer_settime(round_robin_timer_id, 0, &round_robin_timer_spec, NULL) == -1) {
-                handle_error("Cannot set timer to yield thread");
-            }
-
-            if (swapcontext(&manager_thread->context, &next_thread->context) == -1) {
-                handle_error("Cannot swap context from manager to next thread");
-            }
-
-            dlist_pop_left(ready_list);
+        if (dlist_empty(ready_list)) {
+            continue;
         }
+
+        dccthread_t *next_thread = (dccthread_t*) malloc(sizeof(dccthread_t));
+        next_thread = ready_list->head->data;
+
+        if (timer_settime(round_robin_timer_id, 0, &round_robin_timer_spec, NULL) == -1) {
+            handle_error("Cannot set timer to yield thread");
+        }
+
+        if (swapcontext(&manager_thread->context, &next_thread->context) == -1) {
+            handle_error("Cannot swap context from manager to next thread");
+        }
+
+        dlist_pop_left(ready_list);
     }
     
     exit(EXIT_SUCCESS);
@@ -258,34 +269,25 @@ void dccthread_sleep(struct timespec ts) {
         handle_error("Cannot block signals in dccthread_sleep");
     }
 
-    timer_t sleep_timer_id;
+    dccthread_t *current_thread = dccthread_self();
+
     struct itimerspec sleep_timer_spec;
     struct sigevent sleep_timer_sigevent;
-    struct sigaction sleep_sigaction;
 
     sleep_timer_sigevent.sigev_notify = SIGEV_SIGNAL;
     sleep_timer_sigevent.sigev_signo = SLEEP_TIMER_SIGNAL;
+    sleep_timer_sigevent.sigev_value.sival_ptr = &current_thread->sleep_timer_id;
 
-    if (timer_create(CLOCK_REALTIME, &sleep_timer_sigevent, &sleep_timer_id) == -1) {
+    if (timer_create(CLOCK_REALTIME, &sleep_timer_sigevent, &current_thread->sleep_timer_id) == -1) {
         handle_error("Cannot create sleep timer");
     }
 
     sleep_timer_spec.it_value = ts;
 
-    sleep_sigaction.sa_flags = SA_SIGINFO;
-    sleep_sigaction.sa_sigaction = sleep_sigaction_handler;
-
-    if (sigaction(SLEEP_TIMER_SIGNAL, &sleep_sigaction, NULL) == -1) {
-        handle_error("Cannot set action for sleep thread");
-    }
-
-    if (timer_settime(sleep_timer_id, 0, &sleep_timer_spec, NULL) == -1) {
+    if (timer_settime(current_thread->sleep_timer_id, 0, &sleep_timer_spec, NULL) == -1) {
         handle_error("Cannot set timer to sleep thread");
     }
 
-    dccthread_t *current_thread = dccthread_self();
-    current_thread->sleep_si_timerid = sleep_si_timerid_counter;
-    sleep_si_timerid_counter++;
     dlist_push_right(waiting_list, current_thread);
 
     if (swapcontext(&current_thread->context, &manager_thread->context) == -1) {
