@@ -15,8 +15,8 @@ do grupo no desenvolvimento do trabalho (os valores devem somar
 100%).
 
   * João Marcos <jmlg@ufmg.br> 34%
-  * Pierre Sousa <email@domain> 33%
-  * Mariana <email@domain> 33%
+  * Pierre Sousa <pierrevictor@ufmg.br> 33%
+  * Mariana Leite <marianaleite@ufmg.br> 33%
 
 ## 3. Referências bibliográficas
 
